@@ -4,58 +4,37 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>員工國外旅遊報名 - GoGoforeign 連線版</title>
-    <!-- 引入 Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- 引入 React 和 ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- 引入 Babel 用於解析 JSX -->
     <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
     
-    <!-- 引入 Firebase (使用標準 CDN) -->
+    <!-- 引入 EmailJS SDK -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
+
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
       import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics.js";
       import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-      import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+      import { getFirestore, collection, addDoc, deleteDoc, getDocs, doc, onSnapshot, query, where, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-      // 將 Firebase 功能掛載到 window 以便在 React 中使用
-      window.firebaseModules = { initializeApp, getAnalytics, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp };
+      window.firebaseModules = { initializeApp, getAnalytics, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, collection, addDoc, deleteDoc, getDocs, doc, onSnapshot, query, where, orderBy, serverTimestamp };
     </script>
 
     <style>
-      /* 引入字體 */
       @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700;900&family=Noto+Sans+TC:wght@300;400;500&display=swap');
-      
       body { font-family: 'Noto Sans TC', sans-serif; background-color: #f7fcfc; }
       h1, h2, h3, .font-serif { font-family: 'Noto Serif TC', serif; }
-      
-      /* 自訂捲軸 */
       .custom-scrollbar::-webkit-scrollbar { width: 5px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
       .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-      
-      /* 背景動畫 */
       .animate-blob { animation: blob 7s infinite; }
-      @keyframes blob {
-        0% { transform: translate(0px, 0px) scale(1); }
-        33% { transform: translate(30px, -50px) scale(1.1); }
-        66% { transform: translate(-20px, 20px) scale(0.9); }
-        100% { transform: translate(0px, 0px) scale(1); }
-      }
-      
-      /* Loading */
+      @keyframes blob { 0% { transform: translate(0px, 0px) scale(1); } 33% { transform: translate(30px, -50px) scale(1.1); } 66% { transform: translate(-20px, 20px) scale(0.9); } 100% { transform: translate(0px, 0px) scale(1); } }
       .loader { border: 3px solid #f3f3f3; border-top: 3px solid #2dd4bf; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
       @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-      
-      /* Fade In */
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
       .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
-      
-      /* 移除數字輸入框箭頭 */
-      input[type=number]::-webkit-inner-spin-button, 
-      input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     </style>
   </head>
   <body>
@@ -64,7 +43,7 @@
     <script type="text/babel">
       const { useState, useEffect, useMemo } = React;
       
-      // --- 1. 設定你的 GoGoforeign Firebase ---
+      // --- 設定區 ---
       const firebaseConfig = {
         apiKey: "AIzaSyAJxDWoLScisNwqwi6ubdPIKY3h6JgHoaE",
         authDomain: "gogoforeign-fd349.firebaseapp.com",
@@ -75,7 +54,11 @@
         measurementId: "G-2YMPJYDN3T"
       };
 
-      // --- SVG 圖示組件 ---
+      // EmailJS 設定 (已填入你的 Key)
+      const EMAILJS_SERVICE_ID = "service_y4dg7oa"; 
+      const EMAILJS_TEMPLATE_ID = "template_j4vrctu"; 
+      const EMAILJS_PUBLIC_KEY = "xvLWfRBCl10S7_Fr2";   
+
       const Icons = {
         Plane: () => <svg className="w-12 h-12 text-blue-600 transform -rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>,
         Building: ({className}) => <svg className={className || "w-5 h-5"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>,
@@ -92,7 +75,6 @@
 
       function App() {
         const REGION_CAPACITY = 40;
-        // 🔥 確保這裡為 false
         const IS_PAUSED = false; 
         
         const SITES = [
@@ -113,12 +95,18 @@
           "越南 - 峴港"
         ];
 
-        // --- Firebase Setup ---
         const [firebaseInitialized, setFirebaseInitialized] = useState(false);
         const [user, setUser] = useState(null);
         const [db, setDb] = useState(null);
         const [auth, setAuth] = useState(null);
         const [isConfigured, setIsConfigured] = useState(false);
+
+        // 初始化 EmailJS
+        useEffect(() => {
+          if (EMAILJS_PUBLIC_KEY !== "YOUR_EMAILJS_PUBLIC_KEY") {
+            emailjs.init(EMAILJS_PUBLIC_KEY);
+          }
+        }, []);
 
         useEffect(() => {
           const init = () => {
@@ -126,7 +114,6 @@
               const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, getAnalytics } = window.firebaseModules;
               
               if (firebaseConfig.apiKey === "YOUR_API_KEY_HERE") {
-                console.warn("尚未設定 Firebase Config");
                 setIsConfigured(false);
                 setLoading(false);
                 return;
@@ -136,15 +123,12 @@
                 const app = initializeApp(firebaseConfig);
                 const authInstance = getAuth(app);
                 const dbInstance = getFirestore(app);
-                if (typeof getAnalytics === 'function') {
-                  getAnalytics(app);
-                }
+                if (typeof getAnalytics === 'function') getAnalytics(app);
                 
                 setAuth(authInstance);
                 setDb(dbInstance);
                 setIsConfigured(true);
 
-                // 使用 Promise 鏈式調用替代 async/await 以兼容 Babel 6
                 signInAnonymously(authInstance)
                   .then(() => {
                     onAuthStateChanged(authInstance, (u) => {
@@ -158,8 +142,8 @@
                   });
 
               } catch (e) {
-                console.error("Firebase 初始化失敗:", e);
-                alert("Firebase 連線失敗，請檢查 Config 設定是否正確。");
+                console.error("Firebase Init Error:", e);
+                alert("Firebase 連線失敗，請檢查 Config");
               }
             }
           };
@@ -177,42 +161,27 @@
         const [submitting, setSubmitting] = useState(false);
         const [submitted, setSubmitted] = useState(false);
 
-        // --- Firestore Real-time Listener ---
         useEffect(() => {
            if (!user || !db) return;
-
-           const { collection, onSnapshot, query, orderBy } = window.firebaseModules;
-           
-           const q = query(
-             collection(db, 'travel_registrations')
-           );
+           const { collection, onSnapshot, query } = window.firebaseModules;
+           const q = query(collection(db, 'travel_registrations'));
 
            const unsubscribe = onSnapshot(q, (snapshot) => {
-             const data = snapshot.docs.map(doc => ({
-               id: doc.id,
-               ...doc.data()
-             }));
-             
-             // 排序：改用標準寫法，避開 ?.
+             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
              data.sort((a, b) => {
                 const timeA = (a.createdAt && a.createdAt.seconds) ? a.createdAt.seconds : 0;
                 const timeB = (b.createdAt && b.createdAt.seconds) ? b.createdAt.seconds : 0;
                 return timeB - timeA;
              });
-
              setRegistrants(data);
              setLoading(false);
            }, (error) => {
-             console.error("Error fetching registrants:", error);
-             if (error.code === 'permission-denied') {
-                alert("讀取資料失敗：權限不足。請至 Firebase Console > Firestore Database > Rules 將規則設為 allow read, write: if true;");
-             }
+             console.error("Fetch Error:", error);
+             if (error.code === 'permission-denied') alert("讀取資料失敗：請檢查 Firebase Rules 是否為 allow read, write: if true;");
              setLoading(false);
            });
-
            return () => unsubscribe();
         }, [user, db]);
-
 
         const getRegionCount = (regionName) => {
           return registrants
@@ -258,7 +227,32 @@
           });
         };
 
-        // 改用 Promise 寫法，移除 async/await
+        // 發送 Email
+        const sendConfirmationEmail = (data) => {
+          if (EMAILJS_PUBLIC_KEY === "YOUR_EMAILJS_PUBLIC_KEY") {
+            console.warn("EmailJS 未設定，跳過寄信步驟");
+            return;
+          }
+          
+          // 設定 Email 參數 (要跟 EmailJS 模板變數對應)
+          const templateParams = {
+            to_name: data.name,
+            to_email: data.email,
+            region: data.region,
+            site: data.site,
+            total_count: data.totalCount,
+            companion_info: data.hasCompanion === 'true' ? `攜帶眷屬 ${data.companionCount} 位` : '無攜帶眷屬'
+          };
+
+          emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
+            .then((response) => {
+               console.log('Email Sent!', response.status, response.text);
+            }, (err) => {
+               console.error('Email Failed...', err);
+            });
+        };
+
+        // 處理重複資料並提交
         const handleSubmit = (e) => {
           e.preventDefault();
           if (IS_PAUSED) { alert("目前暫停受理報名"); return; }
@@ -285,31 +279,58 @@
 
           setSubmitting(true);
 
-          const { addDoc, collection, serverTimestamp } = window.firebaseModules;
-            
-          // 寫入 Firestore
-          addDoc(collection(db, 'travel_registrations'), {
-              name: form.name,
-              site: form.site,
-              region: form.region,
-              email: form.email,
-              phone: form.phone,
-              hasCompanion: form.hasCompanion,
-              companionCount: thisCount - 1, 
-              totalCount: thisCount,
-              timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
-              createdAt: serverTimestamp()
-          })
-          .then(() => {
+          const { addDoc, deleteDoc, getDocs, collection, query, where, serverTimestamp } = window.firebaseModules;
+          const registrationsRef = collection(db, 'travel_registrations');
+
+          // 1. 查詢是否有舊資料 (依照 Phone 或 Email)
+          const q = query(registrationsRef, where("phone", "==", form.phone));
+
+          getDocs(q)
+            .then((querySnapshot) => {
+              const deletePromises = [];
+              querySnapshot.forEach((doc) => {
+                // 找到舊資料，準備刪除
+                console.log("發現舊資料，準備刪除:", doc.id, doc.data().region);
+                deletePromises.push(deleteDoc(doc.ref));
+              });
+              return Promise.all(deletePromises);
+            })
+            .then(() => {
+              // 2. 舊資料刪除完畢，新增新資料
+              return addDoc(registrationsRef, {
+                name: form.name,
+                site: form.site,
+                region: form.region,
+                email: form.email,
+                phone: form.phone,
+                hasCompanion: form.hasCompanion,
+                companionCount: thisCount - 1, 
+                totalCount: thisCount,
+                timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
+                createdAt: serverTimestamp()
+              });
+            })
+            .then(() => {
+              // 3. 成功！寄信 & 更新 UI
+              sendConfirmationEmail({
+                name: form.name,
+                email: form.email,
+                region: form.region,
+                site: form.site,
+                totalCount: thisCount,
+                hasCompanion: form.hasCompanion,
+                companionCount: form.companionCount
+              });
+
               setSubmitting(false);
               setSubmitted(true);
               setSelectedRegionFilter(form.region);
-          })
-          .catch((error) => {
-              console.error("Error adding document: ", error);
-              alert("報名失敗，請檢查 Firebase Rules 是否允許寫入。 (Error: " + error.message + ")");
+            })
+            .catch((error) => {
+              console.error("Error processing registration: ", error);
+              alert("報名失敗: " + error.message);
               setSubmitting(false);
-          });
+            });
         };
 
         if (submitted) {
@@ -321,7 +342,7 @@
                  <div className="flex justify-center mb-6"><div className="bg-teal-100 p-4 rounded-full shadow-inner"><Icons.CheckCircle className="text-teal-600" /></div></div>
                  <h2 className="text-3xl font-serif font-bold text-teal-900 mb-2">報名成功</h2>
                  <p className="text-teal-700 mb-4 text-lg font-medium">您已成功報名 {form.region} 行程！</p>
-                 <p className="text-slate-500 mb-8 text-sm">準備好您的護照，我們機場見！<br/>(資料已同步至 GoGoforeign)</p>
+                 <p className="text-slate-500 mb-8 text-sm">系統已自動更新您的最新選擇，並發送確認信至您的信箱。</p>
                  <button onClick={() => {
                     setSubmitted(false);
                     setForm({ name: '', site: '', region: '', email: '', phone: '', hasCompanion: 'false', companionCount: 0, companions: [] });
@@ -336,19 +357,7 @@
                 <div className="min-h-screen flex items-center justify-center bg-slate-800 text-white p-8">
                     <div className="max-w-2xl text-center space-y-6">
                         <h1 className="text-3xl font-bold text-teal-400">🚀 準備連接 GoGoforeign</h1>
-                        <div className="bg-slate-900 p-6 rounded-xl border border-slate-700 text-left space-y-4 text-slate-300 font-mono text-sm">
-                            <p>Fam, 你還沒填入 API Key！請打開此 HTML 檔案，找到第 72 行左右的 <span className="text-yellow-400">firebaseConfig</span>。</p>
-                            <p>把你的設定貼進去：</p>
-                            <pre className="bg-black p-4 rounded-lg overflow-x-auto text-green-400">
-{`const firebaseConfig = {
-  apiKey: "你的 KEY",
-  authDomain: "你的專案.firebaseapp.com",
-  projectId: "你的專案ID",
-  ...
-};`}
-                            </pre>
-                        </div>
-                        <p className="text-slate-400">設定完存檔重新整理，我們就可以起飛了！✈️</p>
+                        <p className="text-slate-400">請檢查程式碼中的 API Key 設定。</p>
                     </div>
                 </div>
             );
