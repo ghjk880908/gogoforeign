@@ -105,13 +105,6 @@
         const [auth, setAuth] = useState(null);
         const [isConfigured, setIsConfigured] = useState(false);
 
-        // 初始化 EmailJS
-        useEffect(() => {
-          if (EMAILJS_PUBLIC_KEY !== "YOUR_EMAILJS_PUBLIC_KEY") {
-            emailjs.init(EMAILJS_PUBLIC_KEY);
-          }
-        }, []);
-
         useEffect(() => {
           const init = () => {
             if (window.firebaseModules) {
@@ -165,9 +158,32 @@
         const [submitting, setSubmitting] = useState(false);
         const [submitted, setSubmitted] = useState(false);
 
-        // 機關：計算點擊次數
+        // 機關：計算點擊次數 (修正版)
         const [secretClickCount, setSecretClickCount] = useState(0);
         const clickTimeoutRef = useRef(null);
+
+        // 點擊處理：只負責計數
+        const handleSecretClick = () => {
+          setSecretClickCount(prev => prev + 1);
+          
+          if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+          clickTimeoutRef.current = setTimeout(() => {
+            setSecretClickCount(0); // 1秒內沒繼續點就歸零
+          }, 1000); 
+        };
+
+        // 監聽點擊次數：達到 5 次觸發匯出
+        useEffect(() => {
+          if (secretClickCount >= 5) {
+            // 使用 setTimeout 讓 UI 先更新再跳 alert
+            setTimeout(() => {
+              if (confirm("🤫 管理員模式啟動：是否匯出所有報名資料？")) {
+                handleExportCSV();
+              }
+              setSecretClickCount(0);
+            }, 100);
+          }
+        }, [secretClickCount]);
 
         useEffect(() => {
            if (!user || !db) return;
@@ -235,13 +251,8 @@
           });
         };
 
-        // 發送 Email (增強錯誤提示版)
+        // 發送 Email (穩定版：不依賴初始化，使用第4參數傳遞 Public Key)
         const sendConfirmationEmail = (data) => {
-          if (EMAILJS_PUBLIC_KEY === "YOUR_EMAILJS_PUBLIC_KEY") {
-            console.warn("EmailJS 未設定，跳過寄信步驟");
-            return;
-          }
-          
           const templateParams = {
             to_name: data.name,
             to_email: data.email,
@@ -251,15 +262,18 @@
             companion_info: data.hasCompanion === 'true' ? `攜帶眷屬 ${data.companionCount} 位` : '無攜帶眷屬'
           };
 
-          emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams)
+          // 🔥 使用第4個參數傳遞 Public Key，確保一定能連線
+          emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams, EMAILJS_PUBLIC_KEY)
             .then((response) => {
                console.log('Email Sent!', response.status, response.text);
             }, (err) => {
                console.error('Email Failed...', err);
                if (err.status === 422) {
-                 alert("信件發送失敗：Email 格式錯誤或模板設定有誤 (422 Unprocessable Entity)。請檢查 EmailJS 後台 'To Email' 是否設定為 {{to_email}}");
+                 alert("信件發送失敗 (422)：請檢查 EmailJS 後台 To Email 設定是否為 {{to_email}}");
+               } else if (err.status === 412) {
+                 alert("信件發送失敗 (412)：EmailJS 免費額度可能已用完");
                } else {
-                 alert("信件發送失敗 (Code " + err.status + "): " + err.text);
+                 alert(`信件發送失敗 (${err.status})：${err.text || '網路錯誤'}`);
                }
             });
         };
@@ -271,29 +285,25 @@
             return;
           }
 
-          // 定義 CSV 標題
           const headers = ["姓名", "地區", "工地", "Email", "電話", "攜伴", "眷屬人數", "眷屬資料", "總人數", "報名時間"];
           
-          // 轉換資料為 CSV 格式
           const csvRows = [
-            headers.join(','), // 標題列
+            headers.join(','),
             ...registrants.map(r => {
-              // 處理眷屬資料：轉換成字串
               let companionsStr = "";
               if (r.hasCompanion === 'true' && Array.isArray(r.companions) && r.companions.length > 0) {
                 companionsStr = r.companions.map(c => `${c.name}(${c.phone})`).join('; ');
               }
 
-              // 處理每個欄位，確保逗號不會破壞格式，並處理電話號碼
               const row = [
                 `"${r.name}"`,
                 `"${r.region}"`,
                 `"${r.site}"`,
                 `"${r.email}"`,
-                `'${r.phone}`, // 加單引號避免 Excel 變數字
+                `'${r.phone}`, 
                 `"${r.hasCompanion === 'true' ? '是' : '否'}"`,
                 `"${r.companionCount || 0}"`,
-                `"${companionsStr}"`, // 新增的眷屬詳細資料欄位
+                `"${companionsStr}"`, 
                 `"${r.totalCount}"`,
                 `"${r.timestamp}"`
               ];
@@ -301,8 +311,7 @@
             })
           ];
 
-          // 組合並下載
-          const csvString = "\uFEFF" + csvRows.join('\n'); // 加上 BOM 解決中文亂碼
+          const csvString = "\uFEFF" + csvRows.join('\n');
           const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
           const url = URL.createObjectURL(blob);
           const link = document.createElement('a');
@@ -311,22 +320,6 @@
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-        };
-
-        // 秘密機關：連續點擊太陽圖示
-        const handleSecretClick = () => {
-          setSecretClickCount(prev => {
-            const newCount = prev + 1;
-            if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
-            clickTimeoutRef.current = setTimeout(() => setSecretClickCount(0), 1000); // 1秒內沒點就重置
-
-            if (newCount === 5) {
-              alert("🤫 管理員模式啟動：正在匯出報名資料...");
-              handleExportCSV();
-              return 0;
-            }
-            return newCount;
-          });
         };
 
         const handleSubmit = (e) => {
@@ -358,7 +351,6 @@
           const { addDoc, deleteDoc, getDocs, collection, query, where, serverTimestamp } = window.firebaseModules;
           const registrationsRef = collection(db, 'travel_registrations');
 
-          // 1. 查詢是否有舊資料 (依照 Phone)
           const q = query(registrationsRef, where("phone", "==", form.phone));
 
           getDocs(q)
@@ -371,7 +363,6 @@
               return Promise.all(deletePromises);
             })
             .then(() => {
-              // 2. 舊資料刪除完畢，新增新資料
               return addDoc(registrationsRef, {
                 name: form.name,
                 site: form.site,
@@ -380,7 +371,6 @@
                 phone: form.phone,
                 hasCompanion: form.hasCompanion,
                 companionCount: thisCount - 1, 
-                // 🔥 修正：將眷屬詳細名單存入資料庫
                 companions: form.hasCompanion === 'true' ? form.companions : [],
                 totalCount: thisCount,
                 timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
@@ -388,7 +378,7 @@
               });
             })
             .then(() => {
-              // 3. 成功！寄信 & 更新 UI
+              // 發信並更新 UI
               sendConfirmationEmail({
                 name: form.name,
                 email: form.email,
