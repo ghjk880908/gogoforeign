@@ -35,13 +35,17 @@
       @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
       .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
       input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+      
+      /* 讓太陽圖示可以被點擊，但不明顯 */
+      .secret-btn { cursor: default; }
+      .secret-btn:active { transform: scale(0.95); }
     </style>
   </head>
   <body>
     <div id="root"></div>
 
     <script type="text/babel">
-      const { useState, useEffect, useMemo } = React;
+      const { useState, useEffect, useMemo, useRef } = React;
       
       // --- 設定區 ---
       const firebaseConfig = {
@@ -71,6 +75,7 @@
         Phone: ({className}) => <svg className={className || "w-5 h-5"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"></path></svg>,
         AlertCircle: ({className}) => <svg className={className || "w-6 h-6"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>,
         MapPin: ({className}) => <svg className={className || "w-5 h-5"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>,
+        Download: ({className}) => <svg className={className || "w-5 h-5"} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>,
       };
 
       function App() {
@@ -160,6 +165,10 @@
         const [submitting, setSubmitting] = useState(false);
         const [submitted, setSubmitted] = useState(false);
 
+        // 機關：計算點擊次數
+        const [secretClickCount, setSecretClickCount] = useState(0);
+        const clickTimeoutRef = useRef(null);
+
         useEffect(() => {
            if (!user || !db) return;
            const { collection, onSnapshot, query } = window.firebaseModules;
@@ -226,14 +235,13 @@
           });
         };
 
-        // 發送 Email
+        // 發送 Email (增強錯誤提示版)
         const sendConfirmationEmail = (data) => {
           if (EMAILJS_PUBLIC_KEY === "YOUR_EMAILJS_PUBLIC_KEY") {
             console.warn("EmailJS 未設定，跳過寄信步驟");
             return;
           }
           
-          // 設定 Email 參數 (要跟 EmailJS 模板變數對應)
           const templateParams = {
             to_name: data.name,
             to_email: data.email,
@@ -248,10 +256,79 @@
                console.log('Email Sent!', response.status, response.text);
             }, (err) => {
                console.error('Email Failed...', err);
+               if (err.status === 422) {
+                 alert("信件發送失敗：Email 格式錯誤或模板設定有誤 (422 Unprocessable Entity)。請檢查 EmailJS 後台 'To Email' 是否設定為 {{to_email}}");
+               } else {
+                 alert("信件發送失敗 (Code " + err.status + "): " + err.text);
+               }
             });
         };
 
-        // 處理重複資料並提交
+        // 匯出 CSV 功能
+        const handleExportCSV = () => {
+          if (registrants.length === 0) {
+            alert("目前沒有資料可以匯出");
+            return;
+          }
+
+          // 定義 CSV 標題
+          const headers = ["姓名", "地區", "工地", "Email", "電話", "攜伴", "眷屬人數", "眷屬資料", "總人數", "報名時間"];
+          
+          // 轉換資料為 CSV 格式
+          const csvRows = [
+            headers.join(','), // 標題列
+            ...registrants.map(r => {
+              // 處理眷屬資料：轉換成字串
+              let companionsStr = "";
+              if (r.hasCompanion === 'true' && Array.isArray(r.companions) && r.companions.length > 0) {
+                companionsStr = r.companions.map(c => `${c.name}(${c.phone})`).join('; ');
+              }
+
+              // 處理每個欄位，確保逗號不會破壞格式，並處理電話號碼
+              const row = [
+                `"${r.name}"`,
+                `"${r.region}"`,
+                `"${r.site}"`,
+                `"${r.email}"`,
+                `'${r.phone}`, // 加單引號避免 Excel 變數字
+                `"${r.hasCompanion === 'true' ? '是' : '否'}"`,
+                `"${r.companionCount || 0}"`,
+                `"${companionsStr}"`, // 新增的眷屬詳細資料欄位
+                `"${r.totalCount}"`,
+                `"${r.timestamp}"`
+              ];
+              return row.join(',');
+            })
+          ];
+
+          // 組合並下載
+          const csvString = "\uFEFF" + csvRows.join('\n'); // 加上 BOM 解決中文亂碼
+          const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `GoGoForeign_List_${new Date().toISOString().slice(0,10)}.csv`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        };
+
+        // 秘密機關：連續點擊太陽圖示
+        const handleSecretClick = () => {
+          setSecretClickCount(prev => {
+            const newCount = prev + 1;
+            if (clickTimeoutRef.current) clearTimeout(clickTimeoutRef.current);
+            clickTimeoutRef.current = setTimeout(() => setSecretClickCount(0), 1000); // 1秒內沒點就重置
+
+            if (newCount === 5) {
+              alert("🤫 管理員模式啟動：正在匯出報名資料...");
+              handleExportCSV();
+              return 0;
+            }
+            return newCount;
+          });
+        };
+
         const handleSubmit = (e) => {
           e.preventDefault();
           if (IS_PAUSED) { alert("目前暫停受理報名"); return; }
@@ -281,14 +358,13 @@
           const { addDoc, deleteDoc, getDocs, collection, query, where, serverTimestamp } = window.firebaseModules;
           const registrationsRef = collection(db, 'travel_registrations');
 
-          // 1. 查詢是否有舊資料 (依照 Phone 或 Email)
+          // 1. 查詢是否有舊資料 (依照 Phone)
           const q = query(registrationsRef, where("phone", "==", form.phone));
 
           getDocs(q)
             .then((querySnapshot) => {
               const deletePromises = [];
               querySnapshot.forEach((doc) => {
-                // 找到舊資料，準備刪除
                 console.log("發現舊資料，準備刪除:", doc.id, doc.data().region);
                 deletePromises.push(deleteDoc(doc.ref));
               });
@@ -304,6 +380,8 @@
                 phone: form.phone,
                 hasCompanion: form.hasCompanion,
                 companionCount: thisCount - 1, 
+                // 🔥 修正：將眷屬詳細名單存入資料庫
+                companions: form.hasCompanion === 'true' ? form.companions : [],
                 totalCount: thisCount,
                 timestamp: new Date().toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }),
                 createdAt: serverTimestamp()
@@ -475,7 +553,8 @@
                     <div className="mb-4 pb-4 border-b border-blue-100/50 relative z-10">
                       <div className="flex justify-between items-center mb-4">
                         <div className="flex items-center gap-3">
-                          <div className="p-2 bg-teal-100 rounded-lg text-teal-600 shadow-sm"><Icons.Sun /></div>
+                          {/* 秘密機關按鈕 */}
+                          <div onClick={handleSecretClick} className="p-2 bg-teal-100 rounded-lg text-teal-600 shadow-sm secret-btn select-none"><Icons.Sun /></div>
                           <h2 className="text-xl font-serif font-bold text-slate-700">點選下方地區更新內容</h2>
                         </div>
                         <span className="flex items-center gap-1 text-xs font-medium text-teal-800 bg-teal-100 px-3 py-1 rounded-full shadow-sm">
@@ -483,7 +562,6 @@
                         </span>
                       </div>
                       
-                      {/* 地區篩選按鈕 */}
                       <div className="flex flex-wrap gap-2">
                         {TRAVEL_REGIONS.map((r) => {
                           const count = getRegionCount(r);
